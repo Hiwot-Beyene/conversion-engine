@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+sqlalchemy
+asyncpg
+alembic
+redis
+celery
+playwright
+httpx
+pydantic
+pydantic-settings
+langfuse
+python-dotenv
+pgvector
+rapidfuzz
+tenacity
