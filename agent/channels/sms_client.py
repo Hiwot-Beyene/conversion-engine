@@ -38,13 +38,16 @@ class SMSClient:
         Sends an SMS through Africa's Talking after validating lead compliance.
         """
         # 1. Verification (Gating)
-        lead = db.get(Lead, lead_id)
+        from agent.agent.policies import ChannelSafetyPolicy
+        
+        lead = await db.get(Lead, lead_id)
         if not lead:
             raise SMSClientError(f"Lead with ID {lead_id} not found.")
 
-        if not lead.has_replied_email:
-            logger.warning(f"SMS gated for Lead {lead_id}: No email reply detected.")
-            raise SMSGatingError(f"SMS outreach blocked for lead {lead_id}: has_replied_email is False.")
+        can_send, reason = ChannelSafetyPolicy.can_send_sms(lead)
+        if not can_send:
+            logger.warning(f"SMS gated for Lead {lead_id}: {reason}")
+            raise SMSGatingError(f"SMS outreach blocked: {reason}")
 
         # 2. Preparation
         # AT expects form data

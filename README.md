@@ -42,6 +42,24 @@ sequenceDiagram
     O->>LF: trace log
 ```
 
+## 🧠 Lead Lifecycle & Safety
+
+The engine implements a rigorous state-machine and multi-channel safety policy managed in `agent/agent/policies.py`.
+
+### State Transition Matrix
+| Current Status | Event | Next Status | Channel Action |
+| :--- | :--- | :--- | :--- |
+| `NEW` | Enrichment Done | `NEW` | `ACTION_EMAIL` |
+| `NEW` | Email Sent | `CONTACTED` | None |
+| `CONTACTED` | User Reply | `REPLIED` | `ACTION_QUALIFY` |
+| `REPLIED` | Interested | `QUALIFIED` | `ACTION_SMS / BOOK` |
+| `QUALIFIED` | Meeting Booked | `BOOKED` | None (Terminal) |
+
+### Channel Gating Rules
+- **Email**: Permitted for `NEW` and `CONTACTED` leads. Stop on `OPTOUT`.
+- **SMS**: **GATED**. Only allowed if `has_replied_email` is `True`. This prevents "cold" SMS outreach and protects deliverability scores.
+- **Booking**: Requires `INTERESTED` intent classification and `QUALIFIED` status.
+
 ## 🛠️ Requirements
 
 - **Python**: 3.10+
