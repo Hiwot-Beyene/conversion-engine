@@ -1,0 +1,23 @@
+services:
+  db:
+    image: pgvector/pgvector:pg15
+    container_name: conversion_engine_db
+    environment:
+      POSTGRES_DB: conversion_engine
+      POSTGRES_USER: ce_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  redis:
+    image: redis:7
+    container_name: conversion_engine_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+volumes:
+  postgres_data:
