@@ -1,9 +1,14 @@
 import logging
 import httpx
 from typing import Dict, Any, Optional
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from agent.config import settings
 
 logger = logging.getLogger(__name__)
+
+class HubSpotError(Exception):
+    """Custom exception for HubSpot API failures."""
+    pass
 
 class HubSpotClient:
     """
@@ -18,6 +23,12 @@ class HubSpotClient:
             "Content-Type": "application/json"
         }
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.RequestError, HubSpotError)),
+        reraise=True
+    )
     async def create_or_update_contact(self, email: str, properties: Dict[str, Any]) -> Dict[str, Any]:
         """
         Idempotent contact creation/update in HubSpot.
