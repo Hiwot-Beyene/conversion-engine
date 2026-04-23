@@ -2,7 +2,8 @@ import logging
 import json
 from enum import Enum
 from typing import Optional, Dict, Any, List
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 import httpx
 
 from agent.db.models import Lead, LeadStatus, Enrichment, Conversation, Booking
@@ -30,7 +31,7 @@ class LeadOrchestrator:
     Deterministic state machine for lead processing with full observability.
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.enrichment_pipeline = EnrichmentPipeline(db)
 
@@ -47,20 +48,20 @@ class LeadOrchestrator:
 
         try:
             # 1. Load Lead State
-            lead = self._step_load_state(lead_id, trace)
+            lead = await self._step_load_state(lead_id, trace)
             
             # 2. Fetch/Update Enrichment
             enrichment_signals = await self._step_enrich(lead, trace)
 
             # 3. Classify User Intent (if message provided)
-            intent = LeadIntent.OTHER
+            intent = "other"
             if incoming_message:
                 intent = await self._step_classify_intent(incoming_message, trace)
                 # Update status based on reply
                 if lead.status == LeadStatus.CONTACTED:
                     lead.status = LeadStatus.REPLIED
                     lead.has_replied_email = True
-                    self.db.commit()
+                    await self.db.commit()
 
             # 4. Decide & Execute Next Action
             action_result = await self._step_execute_decision(lead, intent, enrichment_signals, trace)
@@ -83,9 +84,9 @@ class LeadOrchestrator:
         finally:
             langfuse.flush()
 
-    def _step_load_state(self, lead_id: int, trace) -> Lead:
+    async def _step_load_state(self, lead_id: int, trace) -> Lead:
         span = trace.span(name="load_lead_state")
-        lead = self.db.get(Lead, lead_id)
+        lead = await self.db.get(Lead, lead_id)
         if not lead:
             span.end(output="Lead not found")
             raise ValueError(f"Lead {lead_id} not found")
@@ -107,7 +108,7 @@ class LeadOrchestrator:
             confidence=self.enrichment_pipeline._calculate_overall_confidence(signals)
         )
         self.db.add(enrichment_record)
-        self.db.commit()
+        await self.db.commit()
 
         span.end(output=f"Enrichment complete. Confidence: {enrichment_record.confidence}")
         return signals

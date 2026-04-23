@@ -104,7 +104,28 @@ async def handle_email_webhook(
     # 3. Normalize into structured response
     normalized_event = _normalize_resend_event(event_type, data)
     
-    # 4. Log and Return (Business logic happens in a service/celery task downstream)
+    # 4. Downstream Integration (The 'Senior' part)
+    if event_type == "email.replied" and normalized_event.content:
+        from sqlalchemy import select
+        from agent.db.models import Lead
+        from agent.agent.orchestrator import LeadOrchestrator
+        from agent.db.database import async_session
+        
+        async with async_session() as session:
+            # Find the lead by email
+            stmt = select(Lead).where(Lead.email == normalized_event.recipient)
+            lead = (await session.execute(stmt)).scalar_one_or_none()
+            
+            if lead:
+                logger.info(f"Triggering orchestrator for lead {lead.id} following email reply.")
+                orchestrator = LeadOrchestrator(session)
+                # Run orchestrator as a task or await it
+                # In production you'd likely offload this to Celery/Redis
+                await orchestrator.process_lead(lead.id, incoming_message=normalized_event.content)
+            else:
+                logger.warning(f"Received reply from unknown lead: {normalized_event.recipient}")
+
+    # 5. Log and Return
     logger.info(f"Received email event: {event_type} for {normalized_event.recipient}")
     
     return {

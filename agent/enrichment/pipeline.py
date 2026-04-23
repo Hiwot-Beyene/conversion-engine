@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from typing import Dict, Any, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.enrichment import EnrichmentSignal
 from agent.enrichment.crunchbase import enrich_from_crunchbase
@@ -17,7 +17,7 @@ class EnrichmentPipeline:
     data sources and aggregates them into a structured lead enrichment report.
     """
 
-    def __init__(self, db_session: Session):
+    def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
 
     async def run(self, company_name: str, domain: Optional[str] = None) -> Dict[str, EnrichmentSignal]:
@@ -26,14 +26,10 @@ class EnrichmentPipeline:
         """
         logger.info(f"Starting enrichment pipeline for: {company_name} ({domain or 'no domain'})")
 
-        # 1. Crunchbase (DB Query - Synchronous, but we could wrap in thread)
-        # We run this first because other modules might depend on its output (like leadership)
-        cb_signal = enrich_from_crunchbase(self.db_session, domain=domain, name=company_name)
+        # 1. Crunchbase (DB Query - Async)
+        cb_signal = await enrich_from_crunchbase(self.db_session, domain=domain, name=company_name)
 
         # 2. Run other enrichments in parallel
-        # Note: These are currently CPU/IO bound sync functions in the modules, 
-        # so for true production we'd use to_thread or actual async clients.
-        
         loop = asyncio.get_event_loop()
         
         tasks = {
@@ -63,25 +59,6 @@ class EnrichmentPipeline:
 
         logger.info(f"Enrichment pipeline completed for {company_name}")
         return final_signals
-
-    def summarize(self, signals: Dict[str, EnrichmentSignal]) -> Dict[str, Any]:
-        """
-        Provides a condensed summary of the enrichment results for easy consumption.
-        """
-        summary = {
-            "score": self._calculate_overall_confidence(signals),
-            "segments": [],
-            "critical_hits": []
-        }
-        
-        # Add highlights
-        if signals["layoffs"].data.get("has_layoffs"):
-            summary["critical_hits"].append("Recent layoffs detected")
-            
-        if signals["job_posts"].data.get("job_count", 0) > 0:
-            summary["critical_hits"].append(f"Actively hiring ({signals['job_posts'].data['job_count']} roles)")
-
-        return summary
 
     def _calculate_overall_confidence(self, signals: Dict[str, EnrichmentSignal]) -> float:
         """Simple average of confidence scores for successfully enriched sources."""

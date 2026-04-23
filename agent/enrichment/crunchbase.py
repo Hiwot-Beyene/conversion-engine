@@ -1,13 +1,13 @@
 import logging
 from typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import Session
 from agent.db.models import Company
 from agent.enrichment import EnrichmentSignal
 
 logger = logging.getLogger(__name__)
 
-def enrich_from_crunchbase(session: Session, domain: Optional[str] = None, name: Optional[str] = None) -> EnrichmentSignal:
+async def enrich_from_crunchbase(session: AsyncSession, domain: Optional[str] = None, name: Optional[str] = None) -> EnrichmentSignal:
     """
     Enriches data from the local Crunchbase PostgreSQL mirror.
     Matches by domain primarily, then falls back to name.
@@ -19,14 +19,16 @@ def enrich_from_crunchbase(session: Session, domain: Optional[str] = None, name:
         # Try domain match first
         if domain:
             stmt = select(Company).where(Company.domain == domain)
-            company = session.execute(stmt).scalar_one_or_none()
+            result = await session.execute(stmt)
+            company = result.scalar_one_or_none()
             if company:
                 return _map_company(company, confidence=1.0)
 
         # Fallback to name match
         if name:
-            stmt = select(Company).where(Company.name.ilike(f"%{name}%"))
-            company = session.execute(stmt).order_by(Company.employee_count.desc()).first()
+            stmt = select(Company).where(Company.name.ilike(f"%{name}%")).order_by(Company.employee_count.desc())
+            result = await session.execute(stmt)
+            company = result.first()
             if company:
                 return _map_company(company[0], confidence=0.8)
 
