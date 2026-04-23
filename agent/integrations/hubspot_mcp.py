@@ -72,20 +72,34 @@ class HubSpotClient:
 
     async def sync_enrichment_data(self, email: str, enrichment_signals: Dict[str, Any]):
         """
-        Maps lead signals into HubSpot custom properties.
+        Maps lead signals into HubSpot custom properties, including ICP fit.
         """
-        # Map signals to HubSpot internal properties (assuming these exist in HS)
+        from datetime import datetime, timezone
+        
         cb_data = enrichment_signals.get("crunchbase", {}).get("data", {})
         
+        # Mastery logic: Calculate ICP Segment/Fit
+        # Example criteria: >50 employees and >$1M funding = "High Fit"
+        employee_count = cb_data.get("employee_count", 0)
+        funding_amount = cb_data.get("funding_amount_usd", 0)
+        
+        icp_fit = "Low Fit"
+        if employee_count > 500:
+            icp_fit = "Enterprise Fit"
+        elif employee_count > 50 or funding_amount > 1000000:
+            icp_fit = "Mid-Market / High Fit"
+
         properties = {
             "company": cb_data.get("name"),
             "website": cb_data.get("domain"),
             "industry": cb_data.get("sector"),
-            "numberofemployees": str(cb_data.get("employee_count", "")),
+            "numberofemployees": str(employee_count),
+            "icp_segment": icp_fit,  # Mastery field
+            "last_enrichment_timestamp": datetime.now(timezone.utc).isoformat(), # Mastery field
             "lifecyclestage": "lead"
         }
         
-        # Add custom signal metadata if needed
+        # Add custom signal metadata
         if enrichment_signals.get("layoffs", {}).get("data", {}).get("has_layoffs"):
             properties["notes"] = "Attention: Recent layoffs detected at this company."
 
