@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: Initialize Event Listeners
+    from .agent.listeners import setup_event_listeners
+    setup_event_listeners()
+    logger.info("Event listeners initialized.")
+
     # Startup: Connect to PostgreSQL
     logger.info("Connecting to PostgreSQL...")
     try:
