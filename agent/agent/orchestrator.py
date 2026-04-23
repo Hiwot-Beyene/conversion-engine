@@ -10,9 +10,11 @@ from agent.db.models import Lead, LeadStatus, Enrichment, Conversation, Booking
 from agent.enrichment.pipeline import EnrichmentPipeline
 from agent.channels.email_client import email_client
 from agent.channels.sms_client import sms_client
+from agent.channels.cal_client import cal_client
 from agent.agent.composer import email_composer
 from agent.agent.qualifier import reply_qualifier
 from agent.agent.insights import insight_generator
+from agent.integrations.hubspot_mcp import hubspot_client
 from agent.config import settings
 from agent.integrations.langfuse_client import langfuse
 
@@ -136,9 +138,27 @@ class LeadOrchestrator:
         # 2. Intent-based actions
         if intent == "interested":
             lead.status = LeadStatus.QUALIFIED
-            # Here we might trigger cal_client for booking links
-            span.end(output="Action: Booking flow triggered")
-            return {"action": "book_meeting"}
+            
+            # ATOMIC ACTION: Book Meeting + Update CRM
+            booking_res = await cal_client.book_meeting(
+                name=lead.company, 
+                email=lead.email,
+                start_time="2026-05-01T10:00:00Z" # In production, this would come from a selected slot
+            )
+            
+            if booking_res["success"]:
+                lead.status = LeadStatus.BOOKED
+                # Sync 'Booked' status back to CRM immediately
+                await hubspot_client.create_or_update_contact(
+                    email=lead.email,
+                    properties={"lifecyclestage": "opportunity", "lead_status": "BOOKED"}
+                )
+                
+                span.end(output=f"Action: Successfully booked meeting {booking_res['booking_id']}")
+                return {"action": "booked_meeting", "id": booking_res["booking_id"]}
+            else:
+                span.end(output="Action: Booking failed", level="ERROR")
+                return {"action": "booking_failed", "error": booking_res["error"]}
 
         # 3. Status-based outreach
         if lead.status == LeadStatus.NEW:
@@ -168,9 +188,35 @@ class LeadOrchestrator:
         span.end(output="Action: No action required")
         return {"action": "none"}
 
-    def _step_update_crm(self, lead: Lead, result: dict, trace):
-        span = trace.span(name="crm_update")
-        # Placeholder for HubSpot API call
-        logger.info(f"Syncing Lead {lead.email} to HubSpot with action {result.get('action')}")
-        # self.hubspot.update_contact(email=lead.email, properties={"last_action": result.get("action")})
-        span.end(output="CRM Sync simulated")
+    async def _step_update_crm(self, lead: Lead, result: dict, trace):
+        """
+        Synchronizes the current lead state and enriched signals to HubSpot.
+        """
+        span = trace.span(name="crm_sync")
+        
+        # 1. Fetch latest enrichment signals for this lead
+        # (Assuming we want to push the signals we just fetched)
+        enrichment = await self.db.execute(
+            select(Enrichment).where(Enrichment.lead_id == lead.id).order_by(Enrichment.created_at.desc())
+        )
+        latest = enrichment.scalars().first()
+        
+        # 2. Push to HubSpot
+        try:
+            await hubspot_client.sync_enrichment_data(
+                email=lead.email,
+                enrichment_signals=latest.signals if latest else {}
+            )
+            
+            # 3. Update Lifecycle Status based on current orchestrator state
+            await hubspot_client.create_or_update_contact(
+                email=lead.email,
+                properties={
+                    "hs_lead_status": lead.status.value,
+                    "last_orchestrator_action": result.get("action")
+                }
+            )
+            span.end(output="Sync successful")
+        except Exception as e:
+            logger.error(f"CRM Sync failed: {e}")
+            span.end(output=str(e), level="ERROR")
