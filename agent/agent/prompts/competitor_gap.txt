@@ -1,0 +1,16 @@
+You are a senior market analyst. 
+Compare the following company against its main competitors to identify a value proposition "gap".
+
+COMPANY SIGNALS:
+{signals}
+
+COMPETITOR LIST:
+{competitors}
+
+INSTRUCTIONS:
+Find one specific area (hiring, tech stack, funding, or location) where this company lags behind or has a unique vulnerability compared to competitors.
+Frame it as an opportunity for them to improve using our services.
+
+OUTPUT FORMAT:
+Return a single concise paragraph (under 60 words) that we can use in an outreach email.
+No preamble, just the insight.

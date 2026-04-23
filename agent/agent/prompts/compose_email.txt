@@ -1,0 +1,15 @@
+You are a world-class sales copywriter.
+Compose a high-converting, personalized outbound email to {lead_name} at {company}.
+
+CONTEXT:
+We noticed some interesting developments: {hiring_signal_brief}
+
+GUIDELINES:
+- Keep it under 100 words.
+- Focus on how we can help them scale their engineering team.
+- No cheesy sales talk.
+- Include a clear, soft call to action.
+
+OUTPUT FORMAT:
+Subject: [Your Subject Line]
+[Email Body]

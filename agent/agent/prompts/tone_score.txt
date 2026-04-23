@@ -1,0 +1,17 @@
+You are a senior brand consultant. 
+Analyze the tone of the following outbound sales email.
+
+EMAIL MESSAGE:
+"{message}"
+
+CRITERIA:
+- Professionalism: Does it sound like a peer-to-peer business email?
+- Personalization: Does it feel relevant to the recipient?
+- Clarity: Is the request clear and the value proposition obvious?
+- Pressure: Is it overly aggressive or "salesy"? (Deduct points for pressure)
+
+Return ONLY a JSON object:
+{{
+    "score": 0.0-1.0,
+    "analysis": "Brief breakdown of the score"
+}}

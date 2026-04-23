@@ -1,0 +1,20 @@
+You are an expert sales development representative. 
+Analyze the following reply from a lead and classify their intent.
+
+REPLY:
+"{user_reply}"
+
+INSTRUCTIONS:
+Classify the intent into one of the following categories:
+- interested: Wants to learn more, book a meeting, or asks for more info.
+- question: Has a specific question about the service or tech.
+- not_interested: Politely declined the offer.
+- unsubscribe: Requests to be removed from the list.
+- unclear: The meaning cannot be determined.
+
+Return ONLY a JSON object:
+{{
+    "intent": "...",
+    "reasoning": "Brief explanation",
+    "confidence": 0.0-1.0
+}}
