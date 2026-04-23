@@ -34,11 +34,18 @@ class EnrichmentPipeline:
         
         tasks = {
             "layoffs": loop.run_in_executor(None, enrich_from_layoffs, company_name),
-            "job_posts": loop.run_in_executor(None, enrich_from_job_posts, company_name),
+            "job_posts": enrich_from_job_posts(company_name), # Now async
         }
         
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        mapped_results = dict(zip(tasks.keys(), results))
+        # We need to handle the dict values separately since one is a coroutine and one is an executor task
+        layoff_task = tasks["layoffs"]
+        job_task = tasks["job_posts"]
+        
+        results = await asyncio.gather(layoff_task, job_task, return_exceptions=True)
+        mapped_results = {
+            "layoffs": results[0],
+            "job_posts": results[1]
+        }
 
         # Handle potential exceptions from gather
         for key, res in mapped_results.items():
