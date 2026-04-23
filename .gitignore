@@ -1,1 +1,3 @@
 frontend
+.env
+*__pycache__*
