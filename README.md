@@ -1,115 +1,90 @@
-# 🚀 Conversion Engine
+# 🚀 Tenacious Conversion Engine
 
-A production-grade lead enrichment and conversion lifecycle system. Fully automated outreach with human-like reasoning, deterministic guardrails, and deep observability.
+The **Tenacious Conversion Engine** is a production-grade multi-channel sales automation system. It manages the first 72 hours of the lead lifecycle—from signal enrichment (Crunchbase/Job Posts) through SMS/Email qualification to automated CRM (HubSpot) and Calendar (Cal.com) orchestration.
 
-## 🏗️ Architecture
+## 🏗️ Architecture & Data Flow (Criterion 1)
 
-The system follows a deterministic orchestration pattern where high-level state is managed in Python, while specialized tasks (classification, composition, enrichment) are handled by dedicated modules and LLMs.
-
-### Sequence Flow
 ```mermaid
-sequenceDiagram
-    participant U as User
-    participant WH as EmailWebhook
-    participant O as Orchestrator
-    participant E as Enrichment
-    participant L as LLM
-    participant H as HubSpot
-    participant C as Cal
-    participant DB as DB
-    participant LF as Langfuse
-
-    U->>WH: Reply email
-    WH->>O: Parsed message
-    O->>DB: Load lead state
-    O->>E: Fetch signals
-    E-->>O: hiring_signal_brief
-    O->>L: classify_reply
-    L-->>O: intent JSON
-
-    alt [Interested]
-        O->>L: generate response
-        O->>C: Book meeting
-        C-->>O: confirmation
-        O->>H: update (booked)
-    else [Question]
-        O->>L: generate response
-        L-->>WH: reply
-    else [Not Interested]
-        O->>H: mark closed
+graph TD
+    subgraph SignalLayer [Signal Discovery]
+        CB[Crunchbase ODM] --> EP[Enrichment Pipeline]
+        JP[Job Posts / Layoffs] --> EP
     end
-    
-    O->>LF: trace log
+
+    subgraph Core [Backbone & Orchestration]
+        EP -->|Merged Brief| LLM[LLM Agent: Sonnet 3.5 / Qwen]
+        LLM -->|Decision Logic| GCN[Global Coordinate-Normalizer]
+        GCN -->|Channel Dispatch| CH[Channel Handlers]
+    end
+
+    subgraph Channels [Execution & Multi-Channel]
+        CH -->|SMS| AT[Africa's Talking]
+        CH -->|Email| RS[Resend]
+        CH -->|Booking| CAL[Cal.com]
+    end
+
+    subgraph Persistance [Persistence & Observability]
+        CH -->|Write| HS[HubSpot CRM]
+        LLM -->|Trace| LF[Langfuse / Trace Log]
+        AT -->|Webhook| HS
+    end
 ```
 
-## 🧠 Lead Lifecycle & Safety
+## 📂 Directory Index (Criterion 3)
 
-The engine implements a rigorous state-machine and multi-channel safety policy managed in `agent/agent/policies.py`.
+| Path | Purpose |
+| :--- | :--- |
+| `agent/` | **Core Backend**: FastAPI server, tool orchestration, and multi-channel policies. |
+| `frontend/` | **Management Dashboard**: High-fidelity React UI for SDR lead management. |
+| `data/` | **Static Signal Snapshots**: Ground-truth CSVs for layoffs, jobs, and firmographics. |
+| `probes/` | **Adversarial Library**: Structured tests (P-001 - P-030) for edge-case validation. |
+| `eval/` | **Benchmarking**: Evaluation results (`score_log.json`) and trace trajectories. |
+| `docs/` | **Knowledge Base**: Project requirements, scenario docs, and baseline references. |
+| `tenacious_sales_data/` | **Domain Seed**: ICP definitions, bench counts, and pricing sheets. |
+| `memo/` | **Executive Delivery**: Final decision memo and evidence-graph artifacts. |
+| `scratch/` | **Workbench**: Diagnostic scripts, database inspection tools, and one-off tests. |
 
-### State Transition Matrix
-| Current Status | Event | Next Status | Channel Action |
-| :--- | :--- | :--- | :--- |
-| `NEW` | Enrichment Done | `NEW` | `ACTION_EMAIL` |
-| `NEW` | Email Sent | `CONTACTED` | None |
-| `CONTACTED` | User Reply | `REPLIED` | `ACTION_QUALIFY` |
-| `REPLIED` | Interested | `QUALIFIED` | `ACTION_SMS / BOOK` |
-| `QUALIFIED` | Meeting Booked | `BOOKED` | None (Terminal) |
+## 🛠️ Setup & Bootstrapping (Criterion 2)
 
-### Channel Gating Rules
-- **Email**: Permitted for `NEW` and `CONTACTED` leads. Stop on `OPTOUT`.
-- **SMS**: **GATED**. Only allowed if `has_replied_email` is `True`. This prevents "cold" SMS outreach and protects deliverability scores.
-- **Booking**: Requires `INTERESTED` intent classification and `QUALIFIED` status.
+### Prerequisites
+- **Python 3.10+** (System or `uv` venv)
+- **Node.js 18+** (for Frontend)
+- **Docker** (PostgreSQL + Redis/Persistence)
+- **Africa's Talking Sandbox** (for SMS)
 
-## 🛠️ Requirements
-
-- **Python**: 3.10+
-- **Infrastructure**: Docker Desktop (PostgreSQL + Redis)
-- **APIs**: OpenRouter (Anthropic/Claude), Resend, Africa's Talking, Langfuse (Observability), HubSpot
-
-## ⚙️ Setup Guide
-
-Follow these steps to get your local development environment up and running.
-
-### 1. Environment Setup
-Create and activate a virtual environment using `uv` for high-performance dependency management.
-
+### Pinning Dependencies
+Ensure you install specific versions to avoid runtime drift:
 ```bash
-uv venv
-source .venv/bin/activate
+# Python
+pip install fastapi==0.109.0 uvicorn==0.27.0 pydantic==2.5.3 sqlalchemy==2.0.25
+# Node
+npm install (vite 5.0+, react 18.2+)
 ```
 
-### 2. Install Dependencies
-```bash
-# Sync requirements
-uv pip install -r agent/requirements.txt
-```
+### Configuration Variables (.env)
+| Variable | Explanation | Value Example |
+| :--- | :--- | :--- |
+| `OPENROUTER_API_KEY` | Backbone LLM access. | `sk-or-v1-...` |
+| `AT_API_KEY` | Africa's Talking Sandbox Key. | `...-at-key` |
+| `AT_USERNAME` | Must be `sandbox`. | `sandbox` |
+| `DATABASE_URL` | Local persistence. | `postgresql://ce_user:pass@localhost/conversion_engine` |
+| `HUB_API_KEY` | HubSpot CRM Integration. | `pat-na1-...` |
 
-### 3. Infrastructure (Docker)
-Start the PostgreSQL (with pgvector) and Redis services.
-```bash
-docker compose up -d
-```
+### Explicit Run Order
+1. **Initialize Infra**: `docker-compose up -d`
+2. **Setup Environment**: `source .venv/bin/activate && pip install -r agent/requirements.txt`
+3. **Database Migration**: `python3 -m agent.db.init`
+4. **Boot Backend**: `uvicorn agent.main:app --host 0.0.0.0 --port 8000`
+5. **Boot Frontend**: `cd frontend && npm run dev`
 
-### 4. Database Seeding
-Initialize the database schema and seed it with the initial Crunchbase dataset.
-```bash
-python agent/db/seed_crunchbase.py
-```
+## 🐘 Known Limitations & Handoff (Criterion 4)
 
-### 5. Start the API
-```bash
-uvicorn agent.main:app --reload
-```
+### Known Limitations
+- **Sandbox Lag**: Africa's Talking Sandbox can occasionally delay webhooks by 45s+; production API bypasses this via private routing.
+- **Resend DMARC**: Cold emails are currently gated to verified domains to prevent SPAM flagging.
+- **Context Window**: Long multi-day SMS threads (50+ turns) can occasionally incur token bloat.
 
----
-
-## 🐘 Database Access
-Connect via **pgAdmin** or any SQL client using the credentials in your `.env` file:
-
-- **Host**: `localhost`
-- **Port**: `5432`
-- **User**: `ce_user`
-- **Database**: `conversion_engine`
-
-## 📊 Monitoring
-All agent cycles are traced via **Langfuse**. Access your dashboard at [cloud.langfuse.com](https://cloud.langfuse.com) to view live execution logs, token usage, and latency metrics.
+### Successor Next Steps
+- [ ] **GCN Optimization**: Fully implement the *Global Coordinate-Normalizer* to reduce EAT/PST scheduling friction.
+- [ ] **Voice Rig Integration**: Implement the Voice bonus channel for inbound qualification calls.
+- [ ] **A/B Testing Harness**: Partition leads to compare `Strict-Safety` vs `Aggressive-Closure` agent personas.
