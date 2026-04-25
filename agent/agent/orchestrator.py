@@ -163,8 +163,11 @@ class LeadOrchestrator:
         # 3. Status-based outreach
         if lead.status == LeadStatus.NEW:
             # Generate personalized Insight first
-            competitors = ["Competitor A", "Competitor B"] 
-            gap_insight = await insight_generator.generate_competitor_gap(signals, competitors)
+            gap_brief = await insight_generator.generate_competitor_gap_brief(
+                lead_name=lead.company,
+                sector=lead.icp_segment or "Technology", # Use icp_segment as sector
+                prospect_signals=signals
+            )
             
             # Generate Booking Link
             booking_link = cal_client.get_booking_link(lead.email)
@@ -173,7 +176,7 @@ class LeadOrchestrator:
             email = await email_composer.compose(
                 lead_name=lead.company,
                 company=lead.company,
-                hiring_signal_brief=gap_insight
+                hiring_signal_brief=gap_brief.summary
             )
             
             # Append Booking Link
