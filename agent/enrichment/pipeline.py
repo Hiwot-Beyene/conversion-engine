@@ -8,6 +8,7 @@ from agent.enrichment.crunchbase import enrich_from_crunchbase
 from agent.enrichment.job_posts import enrich_from_job_posts
 from agent.enrichment.layoffs import enrich_from_layoffs
 from agent.enrichment.leadership import enrich_leadership_signals
+from agent.enrichment.ai_maturity import ai_maturity_scorer
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +60,16 @@ class EnrichmentPipeline:
         velocity_60d = job_signal.data.get("velocity_60d", 0.0)
 
         # Confidence and Summary
-        overall_confidence = self._calculate_overall_confidence(signals)
-        
+        # AI Maturity Scoring (New 0-3 Mechanism)
+        ai_maturity = ai_maturity_scorer.calculate_score(signals)
+
         brief = HiringSignalBrief(
             company_name=company_name,
             signals=signals,
             overall_confidence=overall_confidence,
             velocity_60d=velocity_60d,
-            summary=f"Enrichment for {company_name} complete with {overall_confidence*100:.1f}% confidence."
+            ai_maturity=ai_maturity,
+            summary=ai_maturity.summary if ai_maturity else f"Enrichment for {company_name} complete."
         )
 
         return brief

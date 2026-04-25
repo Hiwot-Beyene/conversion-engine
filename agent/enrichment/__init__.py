@@ -1,4 +1,8 @@
 from datetime import datetime, timezone
+from typing import Dict, Any, Optional, List
+from pydantic import BaseModel, Field
+
+from .ai_maturity import AIMaturityScore
 
 class SignalMetadata(BaseModel):
     """Metadata for source attribution and staleness tracking."""
@@ -21,6 +25,7 @@ class HiringSignalBrief(BaseModel):
     overall_confidence: float
     summary: Optional[str] = None
     velocity_60d: Optional[float] = None # Calculated delta
+    ai_maturity: Optional[AIMaturityScore] = None # New 0-3 scoring
 
 from .pipeline import EnrichmentPipeline
 from .crunchbase import enrich_from_crunchbase
