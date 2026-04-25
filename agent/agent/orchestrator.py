@@ -69,7 +69,7 @@ class LeadOrchestrator:
             action_result = await self._step_execute_decision(lead, intent, enrichment_signals, trace)
 
             # 5. Update CRM + DB
-            self._step_update_crm(lead, action_result, trace)
+            await self._step_update_crm(lead, action_result, trace)
 
             trace.update(status_message="Successfully completed cycle")
             return {
@@ -163,27 +163,68 @@ class LeadOrchestrator:
         # 3. Status-based outreach
         if lead.status == LeadStatus.NEW:
             # Generate personalized Insight first
-            competitors = ["Competitor A", "Competitor B"] # Mock competitors 
+            competitors = ["Competitor A", "Competitor B"] 
             gap_insight = await insight_generator.generate_competitor_gap(signals, competitors)
             
+            # Generate Booking Link
+            booking_link = cal_client.get_booking_link(lead.email)
+
             # Compose high-quality email
             email = await email_composer.compose(
-                lead_name=lead.company, # Fallback to company name if lead name missing
+                lead_name=lead.company,
                 company=lead.company,
                 hiring_signal_brief=gap_insight
             )
             
+            # Append Booking Link
+            email_body = f"{email['body']}\n\nSchedule a call here: {booking_link}"
+
             # Send
             await email_client.send_email(
                 to=lead.email,
                 subject=email["subject"],
-                html=email["body"]
+                html=email_body
             )
             
+            # HubSpot Logging: Outreach
+            await hubspot_client.log_event(
+                email=lead.email,
+                event_type="Email Outreach",
+                body=f"Sent initial AI-personalized email with subject: {email['subject']}"
+            )
+
             lead.status = LeadStatus.CONTACTED
-            self.db.commit()
+            await self.db.commit()
             span.end(output="Action: Sent AI-composed email")
             return {"action": "send_personalized_email"}
+
+        if lead.status == LeadStatus.REPLIED and intent in ("interested", "question", "other"):
+            # FOLLOW-UP: SMS (Warm-lead gating is checked inside sms_client)
+            try:
+                booking_link = cal_client.get_booking_link(lead.email)
+                sms_text = f"Hi from Conversion Engine! Saw your interest. You can book a quick chat here: {booking_link}"
+                
+                await sms_client.send_sms(
+                    to=lead.phone if lead.phone else "unknown",
+                    message=sms_text,
+                    lead_id=lead.id,
+                    db=self.db
+                )
+                
+                # HubSpot Logging: SMS Follow-up
+                await hubspot_client.log_event(
+                    email=lead.email,
+                    event_type="SMS Follow-up",
+                    body=f"Sent SMS follow-up: {sms_text}"
+                )
+                
+                span.end(output="Action: Sent SMS follow-up")
+                return {"action": "sent_sms_followup"}
+                
+            except Exception as e:
+                logger.warning(f"SMS Follow-up skipped or failed: {e}")
+                span.end(output=f"Action: SMS Gated or Failed: {str(e)}", level="WARNING")
+                return {"action": "sms_skipped", "reason": str(e)}
 
         span.end(output="Action: No action required")
         return {"action": "none"}

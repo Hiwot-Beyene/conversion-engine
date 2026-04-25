@@ -105,5 +105,52 @@ class HubSpotClient:
 
         await self.create_or_update_contact(email, properties)
 
+    async def log_event(self, email: str, event_type: str, body: str) -> Dict[str, Any]:
+        """
+        Logs a communication event (email, SMS, reply) as a HubSpot note.
+        """
+        # 1. Get contact ID
+        search_url = f"{self.base_url}/crm/v3/objects/contacts/search"
+        search_payload = {
+            "filters": [{"propertyName": "email", "operator": "EQ", "value": email}]
+        }
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            search_resp = await client.post(search_url, headers=self.headers, json={"filterGroups": [{"filters": search_payload["filters"]}]})
+            search_data = search_resp.json()
+            
+            if search_data.get("total", 0) == 0:
+                logger.warning(f"Cannot log event: Contact {email} not found in HubSpot.")
+                return {"success": False, "error": "Contact not found"}
+            
+            contact_id = search_data["results"][0]["id"]
+            
+            # 2. Create Note (Engagement)
+            note_url = f"{self.base_url}/crm/v3/objects/notes"
+            note_payload = {
+                "properties": {
+                    "hs_note_body": f"<b>[{event_type.upper()}]</b><br/>{body}",
+                    "hubspot_owner_id": None # Optional
+                },
+                "associations": [
+                    {
+                        "to": {"id": contact_id},
+                        "types": [
+                            {
+                                "associationCategory": "HUBSPOT_DEFINED",
+                                "associationTypeId": 202 # Note to Contact
+                            }
+                        ]
+                    }
+                ]
+            }
+            
+            resp = await client.post(note_url, headers=self.headers, json=note_payload)
+            if resp.status_code not in (200, 201):
+                logger.error(f"Failed to log HubSpot event: {resp.text}")
+                return {"success": False, "error": resp.text}
+                
+            return {"success": True, "data": resp.json()}
+
 # Singleton instance
 hubspot_client = HubSpotClient()

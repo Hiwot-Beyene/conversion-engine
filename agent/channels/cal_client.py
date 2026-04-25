@@ -110,11 +110,15 @@ class CalClient:
             raise CalError(f"Booking execution failed: {resp.text}")
 
         data = resp.json()
-        return {
-            "success": True, 
-            "booking_id": data.get("data", {}).get("id"),
-            "status": "confirmed"
-        }
+    def get_booking_link(self, email: str) -> str:
+        """
+        Generates a personalized booking link for the lead.
+        In Cal.com, this can be done by appending query params to pre-fill fields.
+        """
+        base_link = f"https://cal.com/{settings.ENVIRONMENT}/meeting" # Example path
+        # In a real setup, this would be your slug from event_type_id
+        # We pre-fill the email to reduce friction.
+        return f"{base_link}?email={email}&name=Lead"
 
 # Singleton instance
 cal_client = CalClient()
