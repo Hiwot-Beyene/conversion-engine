@@ -1,3 +1,6 @@
 frontend
 .env
 *__pycache__*
+tenaciou
+.venv
+agent/integration
