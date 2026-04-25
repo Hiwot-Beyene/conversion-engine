@@ -3,7 +3,7 @@ import asyncio
 from typing import Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.enrichment import EnrichmentSignal
+from agent.enrichment import EnrichmentSignal, HiringSignalBrief
 from agent.enrichment.crunchbase import enrich_from_crunchbase
 from agent.enrichment.job_posts import enrich_from_job_posts
 from agent.enrichment.layoffs import enrich_from_layoffs
@@ -20,52 +20,56 @@ class EnrichmentPipeline:
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
 
-    async def run(self, company_name: str, domain: Optional[str] = None) -> Dict[str, EnrichmentSignal]:
+    async def run(self, company_name: str, domain: Optional[str] = None) -> HiringSignalBrief:
         """
         Executes all enrichment modules in parallel where possible.
+        Aggregates into a HiringSignalBrief.
         """
-        logger.info(f"Starting enrichment pipeline for: {company_name} ({domain or 'no domain'})")
+        logger.info(f"Starting enrichment pipeline for: {company_name}")
 
         # 1. Crunchbase (DB Query - Async)
         cb_signal = await enrich_from_crunchbase(self.db_session, domain=domain, name=company_name)
 
         # 2. Run other enrichments in parallel
+        # Note: In production we use a worker pool or specialized clients.
         loop = asyncio.get_event_loop()
         
-        tasks = {
-            "layoffs": loop.run_in_executor(None, enrich_from_layoffs, company_name),
-            "job_posts": enrich_from_job_posts(company_name), # Now async
-        }
+        results = await asyncio.gather(
+            loop.run_in_executor(None, enrich_from_layoffs, company_name),
+            enrich_from_job_posts(company_name),
+            return_exceptions=True
+        )
         
-        # We need to handle the dict values separately since one is a coroutine and one is an executor task
-        layoff_task = tasks["layoffs"]
-        job_task = tasks["job_posts"]
-        
-        results = await asyncio.gather(layoff_task, job_task, return_exceptions=True)
-        mapped_results = {
-            "layoffs": results[0],
-            "job_posts": results[1]
-        }
-
-        # Handle potential exceptions from gather
-        for key, res in mapped_results.items():
-            if isinstance(res, Exception):
-                logger.error(f"Error in {key} enrichment: {res}")
-                mapped_results[key] = EnrichmentSignal(source=key, error=str(res))
+        layoff_signal = results[0] if not isinstance(results[0], Exception) else EnrichmentSignal(source="layoffs", error=str(results[0]))
+        job_signal = results[1] if not isinstance(results[1], Exception) else EnrichmentSignal(source="job_posts", error=str(results[1]))
 
         # 3. Leadership (Dependent on Crunchbase)
         leadership_signal = enrich_leadership_signals(cb_signal)
 
-        # Final Aggregation
-        final_signals = {
+        # Aggregation
+        signals = {
             "crunchbase": cb_signal,
-            "layoffs": mapped_results["layoffs"],
-            "job_posts": mapped_results["job_posts"],
+            "layoffs": layoff_signal,
+            "job_posts": job_signal,
             "leadership": leadership_signal
         }
 
-        logger.info(f"Enrichment pipeline completed for {company_name}")
-        return final_signals
+        # Velocity Logic (60-day window)
+        # We extract from job posts signal which already computed its local delta
+        velocity_60d = job_signal.data.get("velocity_60d", 0.0)
+
+        # Confidence and Summary
+        overall_confidence = self._calculate_overall_confidence(signals)
+        
+        brief = HiringSignalBrief(
+            company_name=company_name,
+            signals=signals,
+            overall_confidence=overall_confidence,
+            velocity_60d=velocity_60d,
+            summary=f"Enrichment for {company_name} complete with {overall_confidence*100:.1f}% confidence."
+        )
+
+        return brief
 
     def _calculate_overall_confidence(self, signals: Dict[str, EnrichmentSignal]) -> float:
         """Simple average of confidence scores for successfully enriched sources."""

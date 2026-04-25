@@ -19,8 +19,15 @@ def enrich_from_layoffs(company_name: str) -> EnrichmentSignal:
         # Search for company name (case-insensitive)
         match = df[df['Company'].str.contains(company_name, case=False, na=False)]
         
+        from agent.enrichment import SignalMetadata
+        
         if match.empty:
-            return EnrichmentSignal(source="layoffs", confidence=1.0, data={"has_layoffs": False})
+            return EnrichmentSignal(
+                source="layoffs", 
+                confidence=1.0, 
+                metadata=SignalMetadata(evidence_strength=1.0),
+                data={"has_layoffs": False, "note": "No layoff history found in layoffs.fyi snapshot."}
+            )
 
         # Get the most recent layoff
         latest = match.sort_values(by='Date', ascending=False).iloc[0]
@@ -28,6 +35,10 @@ def enrich_from_layoffs(company_name: str) -> EnrichmentSignal:
         return EnrichmentSignal(
             source="layoffs",
             confidence=1.0,
+            metadata=SignalMetadata(
+                attribution_url=str(latest['Source']),
+                evidence_strength=1.0
+            ),
             data={
                 "has_layoffs": True,
                 "latest_layoff_date": str(latest['Date']),

@@ -1,12 +1,26 @@
-from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field
+from datetime import datetime, timezone
+
+class SignalMetadata(BaseModel):
+    """Metadata for source attribution and staleness tracking."""
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    attribution_url: Optional[str] = None
+    evidence_strength: float = Field(default=0.0, ge=0.0, le=1.0)
 
 class EnrichmentSignal(BaseModel):
     """Standardized output for every enrichment source."""
     source: str
     data: Dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    metadata: SignalMetadata = Field(default_factory=SignalMetadata)
     error: Optional[str] = None
+
+class HiringSignalBrief(BaseModel):
+    """Merged view of all hiring signals for a company."""
+    company_name: str
+    signals: Dict[str, EnrichmentSignal]
+    overall_confidence: float
+    summary: Optional[str] = None
+    velocity_60d: Optional[float] = None # Calculated delta
 
 from .pipeline import EnrichmentPipeline
 from .crunchbase import enrich_from_crunchbase
