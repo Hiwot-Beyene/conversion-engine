@@ -14,3 +14,5 @@ python-dotenv
 pgvector
 rapidfuzz
 tenacity
+jsonschema
+apscheduler

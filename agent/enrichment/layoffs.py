@@ -3,6 +3,7 @@ import pandas as pd
 from typing import Optional
 from agent.enrichment import EnrichmentSignal
 from agent.config import settings
+from agent.paths import resolve_repo_path
 
 logger = logging.getLogger(__name__)
 
@@ -10,9 +11,9 @@ def enrich_from_layoffs(company_name: str) -> EnrichmentSignal:
     """
     Enriches data from the layoffs.fyi CSV snapshot.
     """
-    path = settings.LAYOFFS_CSV_PATH
-    if not path:
-        return EnrichmentSignal(source="layoffs", error="Layoffs CSV path not configured")
+    path = resolve_repo_path(settings.LAYOFFS_CSV_PATH)
+    if not path.is_file():
+        return EnrichmentSignal(source="layoffs", error=f"Layoffs CSV not found at {path}")
 
     try:
         df = pd.read_csv(path)

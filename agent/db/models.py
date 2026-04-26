@@ -24,6 +24,8 @@ class LeadStatus(enum.Enum):
     REPLIED = "replied"
     QUALIFIED = "qualified"
     BOOKED = "booked"
+    CLOSED_LOST = "closed_lost"
+    UNSUBSCRIBED = "unsubscribed"
 
 class ChannelType(enum.Enum):
     EMAIL = "email"
@@ -95,12 +97,56 @@ class Booking(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True)
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False)
-    cal_event_id = Column(String(255), unique=True)
+    # Cal.com booking UID from webhooks/API (idempotent upsert key)
+    cal_uid = Column(String(255), unique=True, nullable=True)
+    cal_event_id = Column(String(255), unique=True, nullable=True)
     scheduled_at = Column(DateTime, nullable=False)
     status = Column(String(50), default="scheduled")  # e.g., scheduled, completed, cancelled
 
     # Relationships
     lead = relationship("Lead", back_populates="bookings")
+
+
+class ProspectWorkspace(Base, TimestampMixin):
+    """
+    Recovery mirror for dashboard `_workspace` (keyed by Crunchbase ODM id).
+    In-memory dict remains authoritative at runtime; this table survives process restarts.
+    """
+
+    __tablename__ = "prospect_workspaces"
+
+    crunchbase_id = Column(String(255), primary_key=True)
+    payload = Column(JSON, nullable=False, default=dict)
+
+
+class OutboundSequenceState(Base, TimestampMixin):
+    """Cold sequence E1→E2→E3 and re-engagement scheduling (per Crunchbase company)."""
+
+    __tablename__ = "outbound_sequence_states"
+
+    crunchbase_id = Column(String(255), primary_key=True)
+    prospect_email = Column(String(255), nullable=True)
+    stage = Column(String(64), default="idle")  # idle, e1_sent, e2_due, e2_sent, e3_due, e3_sent, reengage_due
+    e1_sent_at = Column(DateTime, nullable=True)
+    e2_scheduled_at = Column(DateTime, nullable=True)
+    e2_sent_at = Column(DateTime, nullable=True)
+    e3_scheduled_at = Column(DateTime, nullable=True)
+    e3_sent_at = Column(DateTime, nullable=True)
+    reengage_scheduled_at = Column(DateTime, nullable=True)
+    reengage_sent_at = Column(DateTime, nullable=True)
+    meta = Column(JSON, default=dict)
+
+
+class OutboundLog(Base, TimestampMixin):
+    """Audit log for suppressed or attempted outbound actions."""
+
+    __tablename__ = "outbound_logs"
+
+    id = Column(Integer, primary_key=True)
+    channel = Column(String(32), nullable=False)
+    recipient = Column(String(255), nullable=True)
+    suppressed = Column(Boolean, default=False, nullable=False)
+    detail = Column(JSON, default=dict)
 
 class Company(Base, TimestampMixin):
     __tablename__ = "companies"

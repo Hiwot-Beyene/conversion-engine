@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -14,13 +16,17 @@ from agent.db.models import Company, Base
 
 load_dotenv()
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 # Replace ${DB_PASSWORD} with the actual password if present in the URL
 if DATABASE_URL and "${DB_PASSWORD}" in DATABASE_URL:
     DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
     DATABASE_URL = DATABASE_URL.replace("${DB_PASSWORD}", DB_PASSWORD)
 
-CSV_PATH = os.getenv("CRUNCHBASE_CSV_PATH")
+CSV_PATH = os.getenv("CRUNCHBASE_CSV_PATH") or str(
+    _REPO_ROOT / "data" / "crunchbase-companies-information.csv"
+)
 
 def parse_employee_count(val):
     if pd.isnull(val):

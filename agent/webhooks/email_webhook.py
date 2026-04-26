@@ -5,7 +5,8 @@ import json
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Request, Header, HTTPException, status
 from pydantic import BaseModel
-from agent.config import settings
+from agent.config import settings, Environment
+from agent.api.leads_router import append_channel_event_by_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,10 +28,13 @@ def verify_resend_signature(payload: bytes, headers: Dict[str, str]) -> bool:
     - webhook-timestamp
     - webhook-signature
     """
-    secret = settings.RESEND_WEBHOOK_SECRET
+    secret = (settings.RESEND_WEBHOOK_SECRET or "").strip()
     if not secret:
-        logger.warning("RESEND_WEBHOOK_SECRET not configured. Skipping verification.")
-        return True # In dev you might want this, but for production it should be False
+        if settings.ENVIRONMENT == Environment.PRODUCTION:
+            logger.error("RESEND_WEBHOOK_SECRET required in production.")
+            return False
+        logger.warning("RESEND_WEBHOOK_SECRET not configured — skipping verification (development only).")
+        return True
         
     msg_id = headers.get("webhook-id")
     msg_timestamp = headers.get("webhook-timestamp")
@@ -107,8 +111,7 @@ async def handle_email_webhook(
     # 4. Downstream Integration (The 'Senior' part)
     if event_type == "email.replied" and normalized_event.content:
         from agent.agent.events import event_dispatcher, ConversionEvent
-        
-        # Dispatch standardized event
+
         await event_dispatcher.dispatch(ConversionEvent(
             event_name="lead.email_replied",
             payload={
@@ -117,6 +120,34 @@ async def handle_email_webhook(
                 "timestamp": normalized_event.timestamp
             }
         ))
+        try:
+            await append_channel_event_by_email(
+                normalized_event.recipient,
+                "email_replied",
+                {"preview": (normalized_event.content or "")[:240]},
+            )
+        except Exception as e:
+            logger.debug("timeline email_replied: %s", e)
+
+    if event_type == "email.bounced":
+        try:
+            await append_channel_event_by_email(
+                normalized_event.recipient,
+                "email_bounced",
+                {"metadata": normalized_event.metadata},
+            )
+        except Exception as e:
+            logger.debug("timeline email_bounced: %s", e)
+
+    if event_type == "email.delivered":
+        try:
+            await append_channel_event_by_email(
+                normalized_event.recipient,
+                "email_delivered",
+                {"email_id": normalized_event.email_id},
+            )
+        except Exception as e:
+            logger.debug("timeline email_delivered: %s", e)
 
     # 5. Log and Return
     logger.info(f"Received email event: {event_type} for {normalized_event.recipient}")

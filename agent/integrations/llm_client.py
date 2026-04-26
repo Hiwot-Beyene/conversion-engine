@@ -6,6 +6,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from agent.config import settings
+from agent.integrations.langfuse_client import trace_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,12 @@ class LLMClient:
     """
 
     def __init__(self):
-        self.api_key = settings.llm.openrouter_api_key.get_secret_value() if settings.llm.openrouter_api_key else None
+        key = settings.llm.openrouter_api_key
+        self.api_key = (
+            key.get_secret_value()
+            if key is not None and hasattr(key, "get_secret_value")
+            else (str(key) if key else None)
+        )
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -76,40 +82,54 @@ class LLMClient:
             # Some models support response_format, for others we rely on the prompt
             payload["response_format"] = {"type": "json_object"}
 
-        # 4. Execute Request
+        trace_in = {"prompt_preview": formatted_prompt[:2000], "json_mode": json_mode}
+
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    self.base_url,
-                    headers=self.headers,
-                    json=payload
-                )
-                
-            if response.status_code == 429:
-                logger.warning("OpenRouter rate limit hit. Retrying...")
-                raise LLMError("Rate limit exceeded")
-                
-            if response.status_code != 200:
-                logger.error(f"OpenRouter error: {response.status_code} - {response.text}")
-                raise LLMError(f"API Error: {response.text}")
+            with trace_llm_call(
+                name="openrouter_chat",
+                input_data=trace_in,
+                model=model,
+                metadata={"temperature": temperature, "model_type": model_type},
+            ) as trace_handle:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(
+                        self.base_url,
+                        headers=self.headers,
+                        json=payload,
+                    )
 
-            data = response.json()
-            content = data["choices"][0]["message"]["content"].strip()
-            
-            # 5. Process Output
-            if json_mode:
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse JSON from LLM: {content}")
-                    # Attempt simple cleaning (remove markdown blocks if present)
-                    cleaned = content.replace("```json", "").replace("```", "").strip()
+                if response.status_code == 429:
+                    logger.warning("OpenRouter rate limit hit. Retrying...")
+                    raise LLMError("Rate limit exceeded")
+
+                if response.status_code != 200:
+                    logger.error(f"OpenRouter error: {response.status_code} - {response.text}")
+                    raise LLMError(f"API Error: {response.text}")
+
+                data = response.json()
+                content = data["choices"][0]["message"]["content"].strip()
+                usage = data.get("usage") or {}
+                trace_handle.token_counts = {
+                    "prompt_tokens": usage.get("prompt_tokens"),
+                    "completion_tokens": usage.get("completion_tokens"),
+                    "total_tokens": usage.get("total_tokens"),
+                }
+
+                if json_mode:
                     try:
-                        return json.loads(cleaned)
+                        out = json.loads(content)
                     except json.JSONDecodeError:
-                        raise LLMError("LLM failed to return valid JSON.")
+                        logger.error(f"Failed to parse JSON from LLM: {content}")
+                        cleaned = content.replace("```json", "").replace("```", "").strip()
+                        try:
+                            out = json.loads(cleaned)
+                        except json.JSONDecodeError:
+                            raise LLMError("LLM failed to return valid JSON.")
+                    trace_handle.output = out
+                    return out
 
-            return content
+                trace_handle.output = content[:4000]
+                return content
 
         except httpx.RequestError as e:
             logger.error(f"Network error calling OpenRouter: {e}")

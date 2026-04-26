@@ -33,6 +33,10 @@ class EmailClient:
         """
         Sends an email using the Resend API.
         """
+        if settings.outbound_is_suppressed():
+            logger.info("Kill switch: email send suppressed (defense-in-depth).")
+            return {"success": False, "suppressed": True, "reason": "outbound_suppressed"}
+
         url = f"{self.base_url}/emails"
         headers = {
             "Authorization": f"Bearer {self.api_key}",

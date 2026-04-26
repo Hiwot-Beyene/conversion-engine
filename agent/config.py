@@ -1,10 +1,13 @@
 import sys
 from enum import Enum
 from functools import lru_cache
-from typing import Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Environment(str, Enum):
@@ -17,6 +20,8 @@ class LLMSettings(BaseModel):
     """Configuration for Large Language Model providers."""
     openrouter_api_key: str
     anthropic_api_key: str
+    default_model: str = "openai/gpt-4o-mini"
+    eval_model: str = "openai/gpt-4o"
 
 
 class EmailSettings(BaseModel):
@@ -79,6 +84,8 @@ class Settings(BaseSettings):
     # --- LLM Settings ---
     OPENROUTER_API_KEY: str
     ANTHROPIC_API_KEY: str
+    OPENROUTER_DEFAULT_MODEL: str = "openai/gpt-4o-mini"
+    OPENROUTER_EVAL_MODEL: str = "openai/gpt-4o"
 
     # --- Email Settings ---
     RESEND_API_KEY: str
@@ -94,11 +101,19 @@ class Settings(BaseSettings):
     # --- CRM Settings ---
     HUBSPOT_ACCESS_TOKEN: str
     HUBSPOT_PORTAL_ID: str
+    # When true, PATCH includes Tenacious custom contact properties (create them in HubSpot first).
+    # When false (default), only built-in HubSpot fields + jobtitle summary; briefs sync via Notes API.
+    HUBSPOT_SYNC_CUSTOM_PROPERTIES: bool = False
 
     # --- Calendar Settings ---
     CALCOM_API_KEY: str
     CALCOM_EVENT_TYPE_ID: str
     CALCOM_WEBHOOK_SECRET: str
+    CALCOM_PUBLIC_USERNAME: Optional[str] = None
+    CALCOM_PUBLIC_EVENT_SLUG: Optional[str] = None
+    # If your Cal event type has a booking question with this slug, we pre-fill it with the company name (calendar title).
+    # Set to empty in .env to omit bookingFieldsResponses for title.
+    CALCOM_BOOKING_TITLE_SLUG: str = "title"
 
     # --- Observability Settings ---
     LANGFUSE_PUBLIC_KEY: str
@@ -113,12 +128,30 @@ class Settings(BaseSettings):
     # --- Deployment Settings ---
     ENVIRONMENT: Environment = Environment.DEVELOPMENT
     KILL_SWITCH: bool = True
+    # Development only: send real email/SMS even when KILL_SWITCH=true (local E2E). Never enable in production.
+    LIVE_OUTREACH: bool = False
+    # When true, dashboard/orchestrator require explicit POST /api/outreach/approve before first email send.
+    REQUIRE_HUMAN_APPROVAL: bool = False
+    # Comma-separated origins for CORS (no spaces). Empty = allow localhost dev only.
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
+    # Process must run with a single worker when using in-memory `_workspace` (set WEB_CONCURRENCY=1).
+    WEB_CONCURRENCY: str = "1"
     RENDER_WEBHOOK_URL: Optional[str] = None
+    # Public HTTPS base (e.g. ngrok) for inbound webhooks — no trailing slash.
+    WEBHOOK_PUBLIC_BASE: Optional[str] = None
+    # One-time data-handling acknowledgement (path to marker file after user confirms policy).
+    DATA_HANDLING_ACK_FILE: str = str(_REPO_ROOT / ".data_handling_acknowledged")
+    # Cold sequence delays (days) after E1 / E2 / before re-engagement
+    SEQUENCE_E2_DELAY_DAYS: int = 5
+    SEQUENCE_E3_DELAY_DAYS: int = 7
+    SEQUENCE_REENGAGE_DELAY_DAYS: int = 14
+    # When true, block outbound send if JSON Schema validation fails for brief projections.
+    ENFORCE_JSON_SCHEMA: bool = False
 
-    # --- Data Sources ---
-    CRUNCHBASE_CSV_PATH: str = "./data/crunchbase-companies-information.csv"
-    LAYOFFS_CSV_PATH: str = "./data/layoffs_fyi.csv"
-    JOB_POSTS_SNAPSHOT_DIR: str = "./data/job_posts_snapshot_apr2026"
+    # --- Data Sources (defaults anchored to repo root so CWD does not matter) ---
+    CRUNCHBASE_CSV_PATH: str = str(_REPO_ROOT / "data" / "crunchbase-companies-information.csv")
+    LAYOFFS_CSV_PATH: str = str(_REPO_ROOT / "data" / "layoffs.csv")
+    JOB_POSTS_SNAPSHOT_DIR: str = str(_REPO_ROOT / "data" / "job_posts_snapshot_apr2026")
 
     # --- Grouped Accessors ---
     
@@ -126,7 +159,9 @@ class Settings(BaseSettings):
     def llm(self) -> LLMSettings:
         return LLMSettings(
             openrouter_api_key=self.OPENROUTER_API_KEY,
-            anthropic_api_key=self.ANTHROPIC_API_KEY
+            anthropic_api_key=self.ANTHROPIC_API_KEY,
+            default_model=self.OPENROUTER_DEFAULT_MODEL,
+            eval_model=self.OPENROUTER_EVAL_MODEL,
         )
 
     @property
@@ -174,8 +209,31 @@ class Settings(BaseSettings):
         return CalendarSettings(
             api_key=self.CALCOM_API_KEY,
             event_type_id=self.CALCOM_EVENT_TYPE_ID,
-            webhook_secret=self.CALCOM_WEBHOOK_SECRET
+            webhook_secret=self.CALCOM_WEBHOOK_SECRET,
         )
+
+    @property
+    def public_webhook_urls(self) -> Dict[str, Any]:
+        """
+        Full URLs to paste into Resend, Cal.com, and Africa's Talking dashboards.
+        HubSpot is not included — this app calls HubSpot via API, not inbound webhooks.
+        """
+        base = (self.WEBHOOK_PUBLIC_BASE or "").strip().rstrip("/")
+        if not base:
+            return {}
+        return {
+            "resend_email_inbound": f"{base}/webhooks/email",
+            "cal_com_booking_events": f"{base}/webhooks/cal",
+            "africas_talking_inbound_sms": f"{base}/webhooks/sms",
+        }
+
+    def outbound_is_suppressed(self) -> bool:
+        """True when outbound email/SMS must not be sent (kill switch), unless dev LIVE_OUTREACH override."""
+        if not self.KILL_SWITCH:
+            return False
+        if self.ENVIRONMENT == Environment.DEVELOPMENT and self.LIVE_OUTREACH:
+            return False
+        return True
 
 
 @lru_cache()
