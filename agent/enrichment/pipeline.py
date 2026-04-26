@@ -9,6 +9,7 @@ from agent.enrichment.crunchbase import enrich_from_crunchbase
 from agent.enrichment.job_posts import enrich_from_job_posts
 from agent.enrichment.layoffs import enrich_from_layoffs
 from agent.enrichment.leadership import enrich_leadership_signals
+from agent.enrichment.tech_stack import enrich_from_tech_stack
 from agent.enrichment.ai_maturity import ai_maturity_scorer
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,8 @@ class EnrichmentPipeline:
             "crunchbase": cb_signal,
             "layoffs": layoff_signal,
             "job_posts": job_signal,
-            "leadership": leadership_signal
+            "leadership": leadership_signal,
+            "tech_stack": enrich_from_tech_stack(job_signal),
         }
 
         # Velocity Logic (60-day window)

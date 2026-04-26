@@ -32,6 +32,7 @@ from .crunchbase import enrich_from_crunchbase
 from .job_posts import enrich_from_job_posts
 from .layoffs import enrich_from_layoffs
 from .leadership import enrich_leadership_signals
+from .tech_stack import enrich_from_tech_stack
 
 __all__ = [
     "EnrichmentSignal", 
@@ -39,5 +40,6 @@ __all__ = [
     "enrich_from_crunchbase",
     "enrich_from_job_posts",
     "enrich_from_layoffs",
-    "enrich_leadership_signals"
+    "enrich_leadership_signals",
+    "enrich_from_tech_stack",
 ]
