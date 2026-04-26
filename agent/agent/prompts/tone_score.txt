@@ -1,17 +1,14 @@
-You are a senior brand consultant. 
-Analyze the tone of the following outbound sales email.
+You evaluate outbound email copy for Tenacious Intelligence Corporation (B2B managed engineering / consulting).
 
-EMAIL MESSAGE:
+EMAIL:
 "{message}"
 
-CRITERIA:
-- Professionalism: Does it sound like a peer-to-peer business email?
-- Personalization: Does it feel relevant to the recipient?
-- Clarity: Is the request clear and the value proposition obvious?
-- Pressure: Is it overly aggressive or "salesy"? (Deduct points for pressure)
+Score 0.0–1.0. Penalize: cheesy sales language, ungrounded claims, condescending peer comparisons, pressure tactics, "bench" jargon, emojis, vague pleasantries ("hope this finds you well"), over-promising capacity.
 
-Return ONLY a JSON object:
+Reward: direct, professional, peer-to-peer tone; clear single ask; signal-grounded personalization.
+
+Return ONLY JSON:
 {{
-    "score": 0.0-1.0,
-    "analysis": "Brief breakdown of the score"
+    "score": 0.0,
+    "analysis": "one sentence"
 }}

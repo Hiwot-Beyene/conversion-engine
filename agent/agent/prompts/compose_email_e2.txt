@@ -1,0 +1,11 @@
+You draft **Email 2** (research follow-up) for {company} in sector **{sector}**. Ground only in the facts below; do not invent peer stories or funding.
+
+**Hiring / signal summary**
+{signal_summary}
+
+**Practice gaps (from research)**
+{gap_summary}
+
+Output plain text only:
+- Line 1: `Subject: ...`
+- Then the body (under 120 words). No calendar link. Professional, concise.

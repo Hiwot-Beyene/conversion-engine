@@ -6,17 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import httpx
 
-from agent.db.models import Lead, LeadStatus, Enrichment, Conversation, Booking
+from agent.db.models import Lead, LeadStatus, Enrichment, Conversation, Booking, OutboundLog
 from agent.enrichment.pipeline import EnrichmentPipeline
+from agent.enrichment import HiringSignalBrief
 from agent.channels.email_client import email_client
 from agent.channels.sms_client import sms_client
-from agent.channels.cal_client import cal_client
+from agent.channels.cal_client import cal_client, CalError
 from agent.agent.composer import email_composer
 from agent.agent.qualifier import reply_qualifier
 from agent.agent.insights import insight_generator
 from agent.integrations.hubspot_mcp import hubspot_client
 from agent.config import settings
-from agent.integrations.langfuse_client import langfuse
+from agent.integrations.langfuse_client import langfuse, start_root_trace
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,10 @@ class LeadOrchestrator:
         Main entry point for processing a lead's lifecycle step.
         """
         # Start a root trace for this lead interaction
-        trace = langfuse.trace(
+        trace = start_root_trace(
             name="lead_processing_cycle",
             user_id=str(lead_id),
-            metadata={"has_message": bool(incoming_message)}
+            metadata={"has_message": bool(incoming_message)},
         )
 
         try:
@@ -53,7 +54,7 @@ class LeadOrchestrator:
             lead = await self._step_load_state(lead_id, trace)
             
             # 2. Fetch/Update Enrichment
-            enrichment_signals = await self._step_enrich(lead, trace)
+            hiring_brief = await self._step_enrich(lead, trace)
 
             # 3. Classify User Intent (if message provided)
             intent = "other"
@@ -66,7 +67,7 @@ class LeadOrchestrator:
                     await self.db.commit()
 
             # 4. Decide & Execute Next Action
-            action_result = await self._step_execute_decision(lead, intent, enrichment_signals, trace)
+            action_result = await self._step_execute_decision(lead, intent, hiring_brief, trace)
 
             # 5. Update CRM + DB
             await self._step_update_crm(lead, action_result, trace)
@@ -96,24 +97,28 @@ class LeadOrchestrator:
         span.end(output=f"Lead loaded: {lead.email} - Status: {lead.status}")
         return lead
 
-    async def _step_enrich(self, lead: Lead, trace) -> Dict[str, Any]:
+    async def _step_enrich(self, lead: Lead, trace) -> HiringSignalBrief:
         span = trace.span(name="enrichment_cycle")
-        
-        # We only re-enrich if not recently done or missing
-        # For production-grade, we check the latest Enrichment record
-        signals = await self.enrichment_pipeline.run(company_name=lead.company)
-        
-        # Save to DB
+
+        brief = await self.enrichment_pipeline.run(company_name=lead.company)
+        stored = {
+            "company_name": brief.company_name,
+            "overall_confidence": brief.overall_confidence,
+            "velocity_60d": brief.velocity_60d,
+            "summary": brief.summary,
+            "ai_maturity": brief.ai_maturity.model_dump(mode="json") if brief.ai_maturity else None,
+            "signals": {k: v.model_dump(mode="json") for k, v in brief.signals.items()},
+        }
         enrichment_record = Enrichment(
             lead_id=lead.id,
-            signals=signals,
-            confidence=self.enrichment_pipeline._calculate_overall_confidence(signals)
+            signals=stored,
+            confidence=brief.overall_confidence,
         )
         self.db.add(enrichment_record)
         await self.db.commit()
 
         span.end(output=f"Enrichment complete. Confidence: {enrichment_record.confidence}")
-        return signals
+        return brief
 
     async def _step_classify_intent(self, message: str, trace) -> str:
         """Uses the dedicated Qualifier module."""
@@ -125,71 +130,137 @@ class LeadOrchestrator:
         span.end(output=intent)
         return intent
 
-    async def _step_execute_decision(self, lead: Lead, intent: str, signals: dict, trace) -> Dict[str, Any]:
+    async def _step_execute_decision(self, lead: Lead, intent: str, brief: HiringSignalBrief, trace) -> Dict[str, Any]:
         """DETERMINISTIC decision matrix delegating to specialized modules."""
         span = trace.span(name="decision_matrix")
         
         # 1. Terminal states
-        if intent in ("unsubscribe", "not_interested"):
-            lead.status = LeadStatus.BOOKED # Close out
-            span.end(output=f"Action: {intent} processed")
-            return {"action": intent}
+        if intent == "unsubscribe":
+            lead.status = LeadStatus.UNSUBSCRIBED
+            await hubspot_client.create_or_update_contact(
+                email=lead.email,
+                properties={"lifecyclestage": "other"},
+            )
+            await hubspot_client.log_event(
+                email=lead.email,
+                event_type="Unsubscribe",
+                body="Prospect unsubscribed — terminal state.",
+            )
+            span.end(output="Action: unsubscribe processed")
+            return {"action": "unsubscribe"}
+
+        if intent == "not_interested":
+            lead.status = LeadStatus.CLOSED_LOST
+            await hubspot_client.create_or_update_contact(
+                email=lead.email,
+                properties={"lifecyclestage": "other"},
+            )
+            await hubspot_client.log_event(
+                email=lead.email,
+                event_type="Not interested",
+                body="Prospect declined — closed lost.",
+            )
+            span.end(output="Action: not_interested processed")
+            return {"action": "not_interested"}
 
         # 2. Intent-based actions
         if intent == "interested":
             lead.status = LeadStatus.QUALIFIED
-            
-            # ATOMIC ACTION: Book Meeting + Update CRM
-            booking_res = await cal_client.book_meeting(
-                name=lead.company, 
-                email=lead.email,
-                start_time="2026-05-01T10:00:00Z" # In production, this would come from a selected slot
-            )
-            
-            if booking_res["success"]:
+
+            if settings.REQUIRE_HUMAN_APPROVAL:
+                await hubspot_client.log_event(
+                    email=lead.email,
+                    event_type="Qualification",
+                    body="Interested — awaiting human approval before Cal.com API booking.",
+                )
+                await hubspot_client.log_event(
+                    email=lead.email,
+                    event_type="Voice handoff requested",
+                    body="Human discovery handoff requested (interested intent).",
+                )
+                span.end(output="Action: qualified; human approval gate")
+                return {"action": "pending_human_booking"}
+
+            slot_start = await cal_client.resolve_booking_start_time(horizon_days=21)
+            if not slot_start:
+                span.end(output="Action: No Cal.com slots available", level="ERROR")
+                return {
+                    "action": "booking_failed",
+                    "error": "No available slots in the configured window",
+                }
+            try:
+                booking_res = await cal_client.book_meeting(
+                    name=lead.company,
+                    email=lead.email,
+                    start_time=slot_start,
+                    booking_title=lead.company,
+                )
+            except CalError as e:
+                span.end(output=f"Action: Booking failed: {e}", level="ERROR")
+                return {"action": "booking_failed", "error": str(e)}
+
+            if booking_res.get("success"):
                 lead.status = LeadStatus.BOOKED
-                # Sync 'Booked' status back to CRM immediately
                 await hubspot_client.create_or_update_contact(
                     email=lead.email,
-                    properties={"lifecyclestage": "opportunity", "lead_status": "BOOKED"}
+                    properties={"lifecyclestage": "opportunity"},
                 )
-                
-                span.end(output=f"Action: Successfully booked meeting {booking_res['booking_id']}")
-                return {"action": "booked_meeting", "id": booking_res["booking_id"]}
-            else:
-                span.end(output="Action: Booking failed", level="ERROR")
-                return {"action": "booking_failed", "error": booking_res["error"]}
+                await hubspot_client.log_event(
+                    email=lead.email,
+                    event_type="Meeting booked",
+                    body=f"Cal.com booking id: {booking_res.get('booking_id')}",
+                )
+
+                span.end(output=f"Action: Successfully booked meeting {booking_res.get('booking_id')}")
+                return {"action": "booked_meeting", "id": booking_res.get("booking_id")}
+            span.end(output="Action: Booking failed", level="ERROR")
+            return {"action": "booking_failed", "error": booking_res.get("error")}
 
         # 3. Status-based outreach
         if lead.status == LeadStatus.NEW:
-            # Generate personalized Insight first
+            cb = brief.signals.get("crunchbase")
+            sector = lead.icp_segment or "Technology"
+            if cb and not cb.error:
+                sector = cb.data.get("sector") or sector
+
             gap_brief = await insight_generator.generate_competitor_gap_brief(
                 lead_name=lead.company,
-                sector=lead.icp_segment or "Technology", # Use icp_segment as sector
-                prospect_signals=signals
+                sector=sector,
+                prospect_signals=brief.signals,
             )
-            
-            # Generate Booking Link
-            booking_link = cal_client.get_booking_link(lead.email)
 
-            # Compose high-quality email
-            email = await email_composer.compose(
-                lead_name=lead.company,
-                company=lead.company,
-                hiring_signal_brief=gap_brief.summary
+            email, _outreach_meta = await email_composer.compose_personalized(
+                hiring_brief=brief,
+                gap_brief=gap_brief,
+                salutation_name="",
+                scheduling_url="",
             )
-            
-            # Append Booking Link
-            email_body = f"{email['body']}\n\nSchedule a call here: {booking_link}"
 
-            # Send
-            await email_client.send_email(
+            email_body = email["body"]
+
+            send_res = await email_client.send_email(
                 to=lead.email,
                 subject=email["subject"],
-                html=email_body
+                html=email_body.replace("\n", "<br/>")
             )
-            
-            # HubSpot Logging: Outreach
+            if send_res.get("suppressed"):
+                self.db.add(
+                    OutboundLog(
+                        channel="email",
+                        recipient=lead.email,
+                        suppressed=True,
+                        detail={"reason": "kill_switch", "lead_id": lead.id},
+                    )
+                )
+                await self.db.commit()
+                await hubspot_client.log_event(
+                    email=lead.email,
+                    event_type="Email Outreach",
+                    body=f"SUPPRESSED (kill switch): would have sent subject: {email['subject']}",
+                )
+                span.end(output="Action: email suppressed by kill switch")
+                return {"action": "email_suppressed"}
+
             await hubspot_client.log_event(
                 email=lead.email,
                 event_type="Email Outreach",
@@ -202,28 +273,49 @@ class LeadOrchestrator:
             return {"action": "send_personalized_email"}
 
         if lead.status == LeadStatus.REPLIED and intent in ("interested", "question", "other"):
-            # FOLLOW-UP: SMS (Warm-lead gating is checked inside sms_client)
+            if not (lead.phone or "").strip():
+                span.end(output="Action: SMS skipped — no phone on lead")
+                return {"action": "sms_skipped_no_phone"}
+
             try:
-                booking_link = cal_client.get_booking_link(lead.email)
-                sms_text = f"Hi from Conversion Engine! Saw your interest. You can book a quick chat here: {booking_link}"
-                
-                await sms_client.send_sms(
-                    to=lead.phone if lead.phone else "unknown",
+                sms_text = (
+                    f"Tenacious: thanks for the reply re {lead.company}. "
+                    "If useful, share two times next week for a 15m call and we will confirm."
+                )[:320]
+
+                sms_res = await sms_client.send_sms(
+                    to=lead.phone,
                     message=sms_text,
                     lead_id=lead.id,
                     db=self.db
                 )
-                
-                # HubSpot Logging: SMS Follow-up
+                if sms_res.get("suppressed"):
+                    self.db.add(
+                        OutboundLog(
+                            channel="sms",
+                            recipient=lead.phone,
+                            suppressed=True,
+                            detail={"reason": "kill_switch", "lead_id": lead.id},
+                        )
+                    )
+                    await self.db.commit()
+                    await hubspot_client.log_event(
+                        email=lead.email,
+                        event_type="SMS Follow-up",
+                        body=f"SUPPRESSED (kill switch): would have sent: {sms_text}",
+                    )
+                    span.end(output="Action: SMS suppressed")
+                    return {"action": "sms_suppressed"}
+
                 await hubspot_client.log_event(
                     email=lead.email,
                     event_type="SMS Follow-up",
                     body=f"Sent SMS follow-up: {sms_text}"
                 )
-                
+
                 span.end(output="Action: Sent SMS follow-up")
                 return {"action": "sent_sms_followup"}
-                
+
             except Exception as e:
                 logger.warning(f"SMS Follow-up skipped or failed: {e}")
                 span.end(output=f"Action: SMS Gated or Failed: {str(e)}", level="WARNING")
@@ -244,21 +336,24 @@ class LeadOrchestrator:
             select(Enrichment).where(Enrichment.lead_id == lead.id).order_by(Enrichment.created_at.desc())
         )
         latest = enrichment.scalars().first()
-        
+        payload = latest.signals if latest else {}
+
         # 2. Push to HubSpot
         try:
             await hubspot_client.sync_enrichment_data(
                 email=lead.email,
-                enrichment_signals=latest.signals if latest else {}
+                enrichment_signals=payload,
             )
             
             # 3. Update Lifecycle Status based on current orchestrator state
             await hubspot_client.create_or_update_contact(
                 email=lead.email,
-                properties={
-                    "hs_lead_status": lead.status.value,
-                    "last_orchestrator_action": result.get("action")
-                }
+                properties={"hs_lead_status": lead.status.value.replace("_", " ")[:120]},
+            )
+            await hubspot_client.log_event(
+                email=lead.email,
+                event_type="Orchestrator",
+                body=f"last_action={result.get('action')}",
             )
             span.end(output="Sync successful")
         except Exception as e:

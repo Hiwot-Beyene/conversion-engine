@@ -1,0 +1,15 @@
+You are writing a warm follow-up email reply for {company}.
+
+Prospect intent classification: {intent}
+Prospect message:
+{reply_text}
+
+Rules:
+- Keep under 120 words.
+- Professional, helpful, non-pushy.
+- Do not invent facts.
+- If a calendar link is unavailable, invite async next steps.
+
+Output plain text:
+Line 1: Subject: ...
+Then the email body.

@@ -1,15 +1,55 @@
-You are a world-class sales copywriter.
-Compose a high-converting, personalized outbound email to {lead_name} at {company}.
+You draft **Email 1 — signal-grounded opener** for **Tenacious Intelligence Corporation** (B2B managed engineering / consulting). Follow the structure and tone in `tenacious_sales_data/seed/email_sequences/cold.md` (max ~120 words body; human email, not a report).
 
-CONTEXT:
-We noticed some interesting developments: {hiring_signal_brief}
+Prospect salutation name (may be empty): {salutation_name}
+Company: {company}
+Public sector label (Crunchbase / gap brief): {prospect_sector_public}
 
-GUIDELINES:
-- Keep it under 100 words.
-- Focus on how we can help them scale their engineering team.
-- No cheesy sales talk.
-- Include a clear, soft call to action.
+--- SUBJECT LINE (mandatory seed — use this exact line OR change only the hook after the colon; keep the same prefix word) ---
+{suggested_subject_line}
 
-OUTPUT FORMAT:
-Subject: [Your Subject Line]
-[Email Body]
+--- FACTS TO USE (turn into plain sentences; do not copy as a list or with labels) ---
+{email_digest}
+
+--- ICP (internal grading only — do not paste field names into the email) ---
+{icp_segment}
+Segment key: {segment_key} | classifier confidence: {segment_confidence}
+
+Subject-line intent: {subject_line_pattern_hint}
+
+Tenacious value angle (ONE conversational sentence you may paraphrase — must sound like a peer speaking to a CTO, not instructions to yourself): {segment_pitch_guidance}
+
+--- DELIVERY CAPACITY (honesty — one short clause max; never invent bench numbers) ---
+{bench_capacity_snapshot}
+
+--- CONSTRAINTS ---
+{honesty_constraints}
+
+--- CALL TO ACTION ---
+{scheduling_instruction}
+
+FORBIDDEN IN THE EMAIL BODY:
+- Any pasted text from a "brief", "snapshot", "ODM", "Layoffs.fyi", "percentile", "peer sample", "practice gaps", "velocity index", or bullet lists of research metadata.
+- More than two numeric figures in the entire body.
+- The competitor gap block or raw signal dump below (reference is for emergencies only — still output a normal email).
+
+--- INTERNAL REFERENCE ONLY (if digest missed a fact; never paste verbatim) ---
+Signal detail (do not output as bullet points):
+{signal_narrative}
+
+Competitor framing (do not output as bullet points):
+{competitor_gap_block}
+
+STRUCTURE:
+1) Salutation: first name if `salutation_name` is set; otherwise "Hello," (not "Hi there").
+2) Sentence 1: one concrete fact from the digest in natural language.
+3) Sentence 2: observation or question (grounded; ask if signal is weak).
+4) Sentence 3: one sentence on how Tenacious helps this situation (from segment angle; no service menu).
+5) Sentence 4: single ask per SCHEDULING INSTRUCTION.
+6) Signature exactly:
+Research Partner
+Tenacious Intelligence Corporation
+gettenacious.com
+
+OUTPUT (plain text only):
+Subject: <must match the seed above (same prefix: Request/Context/Note/Question/Congrats/Follow-up); ≤60 characters; concrete hook>
+<body>

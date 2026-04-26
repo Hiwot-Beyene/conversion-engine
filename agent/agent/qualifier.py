@@ -37,11 +37,10 @@ class ReplyQualifier:
             
             # 3. Mandatory Safety Parsing
             try:
-                # If json_mode=True, llm_client might already return a dict
                 if isinstance(response, dict):
                     return response
                 return json.loads(response)
-            except:
+            except (json.JSONDecodeError, TypeError):
                 return {"intent": "unclear", "confidence": 0}
 
         except Exception as e:

@@ -1,0 +1,11 @@
+You draft **Email 3** (gracious close) for {company} in sector **{sector}**. This is the last cold touch — acknowledge you may not be a priority; offer a single line to reconnect. No invented facts.
+
+**Context**
+{signal_summary}
+
+**Gaps referenced earlier**
+{gap_summary}
+
+Output plain text only:
+- Line 1: `Subject: ...`
+- Then the body (under 90 words). Warm, no pressure. No calendar URL unless they already asked.

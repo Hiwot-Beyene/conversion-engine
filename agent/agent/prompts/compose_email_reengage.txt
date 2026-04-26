@@ -1,0 +1,13 @@
+You draft a re-engagement email for {company} in {sector}.
+They already received Email 1/2/3 and did not reply.
+
+Use these facts only:
+{signal_summary}
+
+Key gaps previously shared:
+{gap_summary}
+
+Output plain text only:
+- Line 1: `Subject: ...`
+- Then body under 90 words.
+- Tone: gracious, optional re-open, no pressure.
