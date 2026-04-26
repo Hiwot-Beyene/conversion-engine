@@ -27,11 +27,30 @@ class AIMaturityScorer:
     Analyzes six signal categories: Talent, Stack, Funding, Velocity, Leadership, and Advocacy.
     """
 
+    def _normalize_signals(self, signals: Dict[str, Any]) -> Dict[str, Any]:
+        """Accepts dict values as EnrichmentSignal models or plain dicts."""
+        out: Dict[str, Any] = {}
+        for key, val in (signals or {}).items():
+            if val is None:
+                continue
+            if hasattr(val, "model_dump"):
+                out[key] = val.model_dump()
+            elif isinstance(val, dict):
+                out[key] = val
+            else:
+                out[key] = {}
+        if "tech_stack" not in out and "job_posts" in out:
+            jp = out["job_posts"].get("data") or {}
+            roles = jp.get("roles") or []
+            out["tech_stack"] = {"data": {"has_vector_db": any("vector" in str(r).lower() for r in roles)}}
+        return out
+
     def calculate_score(self, signals: Dict[str, Any]) -> AIMaturityScore:
         """
         Computes a unified AI maturity score from six signal categories.
         Explicitly handles silent companies with a 0 score.
         """
+        signals = self._normalize_signals(signals)
         # 1. Individual Signal Analysis
         raw_indices = {
             "talent": self._analyze_talent(signals.get("job_posts", {})),
@@ -106,21 +125,35 @@ class AIMaturityScorer:
         )
 
     def _analyze_funding(self, signal: Dict[str, Any]) -> SignalJustification:
-        funding = signal.get("data", {}).get("funding_amount_usd", 0)
+        raw = signal.get("data", {}).get("funding_amount_usd")
+        try:
+            funding = 0.0 if raw is None else float(raw)
+        except (TypeError, ValueError):
+            funding = 0.0
+        if funding <= 0:
+            return SignalJustification(
+                score=0.1,
+                justification="No numeric funding total in enrichment payload (common for ODM CSV rows).",
+                confidence=0.85,
+            )
         score = 1.0 if funding > 50000000 else (0.5 if funding > 5000000 else 0.1)
         return SignalJustification(
             score=score,
             justification=f"Funding level of ${funding:,.0f} supports R&D investment.",
-            confidence=1.0
+            confidence=1.0,
         )
 
     def _analyze_velocity(self, signal: Dict[str, Any]) -> SignalJustification:
-        velocity = signal.get("data", {}).get("velocity_60d", 0.0)
-        score = min(1.0, max(0.0, (velocity + 0.5) / 1.5)) # Normalize -0.5..1.0 to 0..1
+        raw_v = signal.get("data", {}).get("velocity_60d")
+        try:
+            velocity = 0.0 if raw_v is None else float(raw_v)
+        except (TypeError, ValueError):
+            velocity = 0.0
+        score = min(1.0, max(0.0, (velocity + 0.5) / 1.5))  # Normalize -0.5..1.0 to 0..1
         return SignalJustification(
             score=score,
-            justification=f"Hiring velocity of {velocity:.2f} roles/day.",
-            confidence=0.8
+            justification=f"Hiring velocity index {velocity:.2f} (60d window).",
+            confidence=0.8,
         )
 
     def _analyze_leadership(self, signal: Dict[str, Any]) -> SignalJustification:
@@ -132,7 +165,8 @@ class AIMaturityScorer:
         )
 
     def _analyze_advocacy(self, signal: Dict[str, Any]) -> SignalJustification:
-        desc = signal.get("data", {}).get("description", "").lower()
+        desc_raw = signal.get("data", {}).get("description") or ""
+        desc = str(desc_raw).lower()
         has_keywords = any(kw in desc for kw in ["ai-first", "autonomous", "intelligent", "transforming"])
         return SignalJustification(
             score=0.9 if has_keywords else 0.2,

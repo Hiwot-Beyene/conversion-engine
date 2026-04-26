@@ -1,7 +1,8 @@
-frontend
+# frontend
 .env
 *__pycache__*
 tenaciou
 .venv
 agent/integration
 tenacious_sales_data
+.data_handling_acknowledged.txt

@@ -74,8 +74,20 @@ npm install (vite 5.0+, react 18.2+)
 1. **Initialize Infra**: `docker-compose up -d`
 2. **Setup Environment**: `source .venv/bin/activate && pip install -r agent/requirements.txt`
 3. **Database Migration**: `python3 -m agent.db.init`
-4. **Boot Backend**: `uvicorn agent.main:app --host 0.0.0.0 --port 8000`
-5. **Boot Frontend**: `cd frontend && npm run dev`
+4. **Boot Backend** (single worker — required for in-memory `_workspace`):
+   ```bash
+   export WEB_CONCURRENCY=1
+   uvicorn agent.main:app --host 0.0.0.0 --port 8000 --workers 1
+   ```
+5. **Boot Frontend**: `cd frontend && npm install && npm run dev`  
+   Set `VITE_DEMO_EMAIL` and `VITE_HUBSPOT_PORTAL_ID` in `frontend/.env`.
+
+### Reliability & recovery
+
+- **Kill switch**: `KILL_SWITCH=true` blocks real Resend / Africa’s Talking I/O (clients return `suppressed`). See `docs/RUNBOOK.md`.
+- **Postgres mirror**: Dashboard state is mirrored to `prospect_workspaces`. After a restart, the API merges JSON back and re-validates briefs. If `GET /api/stats` returns `workspace_persisted: false`, re-run **Enrich** for that company.
+- **Webhooks**: In `production`, `RESEND_WEBHOOK_SECRET` and `CALCOM_WEBHOOK_SECRET` are required at startup.
+- **Eval harness**: `make eval` runs `eval/tau2/runner.py` (API should be listening). `make smoke` runs a quick import + pytest subset.
 
 ## 🐘 Known Limitations & Handoff (Criterion 4)
 
